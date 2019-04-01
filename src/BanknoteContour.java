@@ -34,13 +34,32 @@ public class BanknoteContour {
             Mat src = Imgcodecs.imread(folder + "/"+ fileName, Imgcodecs.IMREAD_GRAYSCALE);
             Mat srcColor = Imgcodecs.imread(folder + "/"+ fileName, Imgcodecs.IMREAD_COLOR);
            
-            // REduce noise by filtering
+            
+            // Reduce noise by filtering
             Mat srcBlurred = new Mat();            
             Size ksize = new Size(5, 5);
             double sigmaX = 0;
             double sigmaY = 0;
             Imgproc.GaussianBlur(src, srcBlurred, ksize, sigmaX, sigmaY , Core.BORDER_DEFAULT);
             
+            
+            // Get the strong corners in the source image
+            MatOfPoint corners = new MatOfPoint();
+            int maxCorners = 20;
+            double qualityLevel = 0.1;
+            double minDistance = 10;
+            Imgproc.goodFeaturesToTrack(srcBlurred, corners, maxCorners, qualityLevel, minDistance);
+            
+            // Draw corners detected
+            Mat drawing = src;
+            int radius = 8;
+            List<Point> points = corners.toList();
+            for (int j=0; j < corners.rows(); j++) {
+                Imgproc.circle(drawing, points.get(j), radius, new Scalar(0, 255, 0), Imgproc.LINE_8);
+            }
+            
+            
+            /*
             // Sharpen the image to emphasize the edges
             Mat kernelSharpening = new Mat( new Size(3,3), CvType.CV_32F);
             double[] data = {-1, -1, -1, -1, 9, -1, -1, -1, -1};
@@ -53,19 +72,19 @@ public class BanknoteContour {
             Imgproc.equalizeHist(srcBlurred, srcEqualized);
             
             // Get rid of self intersecting contours
+            Mat cleaned = new Mat();
             int kernelSize = 2;
             int elementType = Imgproc.CV_SHAPE_RECT;
             Mat element = Imgproc.getStructuringElement(
                     elementType, new Size(2 * kernelSize + 1, 2 * kernelSize + 1),
                     new Point(kernelSize, kernelSize));
-            //Imgproc.dilate(srcSharpened, srcSharpened, element, new Point(element.width()/2, element.height()/2), 4);
+            Imgproc.dilate(srcEqualized, cleaned, element, new Point(element.width()/2, element.height()/2), 4);
             //Imgproc.erode(src, src, element, new Point(element.width()/2, element.height()/2), 1);
                        
             // threshold to find the contour
             Mat thresholded = new Mat();
-            Imgproc.threshold(srcBlurred, thresholded, 0, 255, Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU);
+            Imgproc.threshold(cleaned, thresholded, 0, 255, Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU);
 
-            
             // Find edges
             Mat cannyOutput = new Mat();
             int cannyThreshold = 70;
@@ -73,13 +92,12 @@ public class BanknoteContour {
 
             // Increase contour thickness
             Mat dilated  = new Mat();
-            Imgproc.dilate(cannyOutput, cannyOutput, element, new Point(element.width()/2, element.height()/2), 4);
+            Imgproc.dilate(cannyOutput, dilated, element, new Point(element.width()/2, element.height()/2), 4);
 
             //Mat drawing = cannyOutput;
             //Mat drawing  = new Mat(src.size(), CvType.CV_8UC3);
             Mat drawing = src;
 
-            
             // Find all contours
             Mat hierarchy = new Mat();
             List<MatOfPoint> contours = new ArrayList<>();
@@ -121,6 +139,7 @@ public class BanknoteContour {
                     drawRotatedRect(drawing, vertices, blue);
                 }
             }
+            */
             
             
             Imgcodecs.imwrite("result/"+fileName, drawing);
