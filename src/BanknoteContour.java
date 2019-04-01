@@ -42,34 +42,23 @@ public class BanknoteContour {
             double sigmaY = 0;
             Imgproc.GaussianBlur(src, srcBlurred, ksize, sigmaX, sigmaY , Core.BORDER_DEFAULT);
             
-            
-            // Get the strong corners in the source image
-            MatOfPoint corners = new MatOfPoint();
-            int maxCorners = 20;
-            double qualityLevel = 0.1;
-            double minDistance = 10;
-            Imgproc.goodFeaturesToTrack(srcBlurred, corners, maxCorners, qualityLevel, minDistance);
-            
-            // Draw corners detected
-            Mat drawing = src;
-            int radius = 8;
-            List<Point> points = corners.toList();
-            for (int j=0; j < corners.rows(); j++) {
-                Imgproc.circle(drawing, points.get(j), radius, new Scalar(0, 255, 0), Imgproc.LINE_8);
-            }
+            // Improve the contrast to account for lighting conditions
+            Mat srcEqualized = new Mat();
+            Imgproc.equalizeHist(src, srcEqualized);
             
             
-            /*
             // Sharpen the image to emphasize the edges
             Mat kernelSharpening = new Mat( new Size(3,3), CvType.CV_32F);
             double[] data = {-1, -1, -1, -1, 9, -1, -1, -1, -1};
             kernelSharpening.put(0, 0, data);
             Mat srcSharpened = new Mat();
             Imgproc.filter2D(src, srcSharpened, -1, kernelSharpening);
+            
+            
+            // threshold to find the contour
+            Mat thresholded = new Mat();
+            Imgproc.threshold(srcSharpened, thresholded, 0, 255, Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU);
 
-            // Improve the contrast to account for lighting conditions
-            Mat srcEqualized = new Mat();
-            Imgproc.equalizeHist(srcBlurred, srcEqualized);
             
             // Get rid of self intersecting contours
             Mat cleaned = new Mat();
@@ -78,22 +67,47 @@ public class BanknoteContour {
             Mat element = Imgproc.getStructuringElement(
                     elementType, new Size(2 * kernelSize + 1, 2 * kernelSize + 1),
                     new Point(kernelSize, kernelSize));
-            Imgproc.dilate(srcEqualized, cleaned, element, new Point(element.width()/2, element.height()/2), 4);
-            //Imgproc.erode(src, src, element, new Point(element.width()/2, element.height()/2), 1);
-                       
-            // threshold to find the contour
-            Mat thresholded = new Mat();
-            Imgproc.threshold(cleaned, thresholded, 0, 255, Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU);
-
+            Imgproc.dilate(thresholded, cleaned, element, new Point(element.width()/2, element.height()/2), 4);
+            //Imgproc.erode(cleaned, cleaned, element, new Point(element.width()/2, element.height()/2), 1);
+       
+                        
             // Find edges
             Mat cannyOutput = new Mat();
             int cannyThreshold = 70;
-            Imgproc.Canny(srcBlurred, cannyOutput, cannyThreshold, cannyThreshold * 2);
+            Imgproc.Canny(cleaned, cannyOutput, cannyThreshold, cannyThreshold * 2);
 
             // Increase contour thickness
             Mat dilated  = new Mat();
+            Mat eroded = new Mat();
             Imgproc.dilate(cannyOutput, dilated, element, new Point(element.width()/2, element.height()/2), 4);
+            Imgproc.erode(dilated, eroded, element, new Point(element.width()/2, element.height()/2), 1);
 
+  
+            Mat drawing = eroded;
+            
+            
+            /*
+
+            // Get the strong corners in the source image
+            MatOfPoint corners = new MatOfPoint();
+            int maxCorners = 50;
+            double qualityLevel = 0.1;
+            double minDistance = 10;
+            Imgproc.goodFeaturesToTrack(srcSharpened, corners, maxCorners, qualityLevel, minDistance);
+            
+            // Draw corners detected
+            
+            int radius = 8;
+            List<Point> points = corners.toList();
+            for (int j=0; j < corners.rows(); j++) {
+                Imgproc.circle(drawing, points.get(j), radius, new Scalar(0, 255, 0), Imgproc.LINE_8);
+            }
+            
+
+
+            
+                            
+            
             //Mat drawing = cannyOutput;
             //Mat drawing  = new Mat(src.size(), CvType.CV_8UC3);
             Mat drawing = src;
