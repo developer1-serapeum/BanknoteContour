@@ -1,6 +1,7 @@
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
@@ -31,132 +32,140 @@ public class BanknoteContour {
 
             System.out.println("Reading image : " + fileName);
 
-            Mat src = Imgcodecs.imread(folder + "/"+ fileName, Imgcodecs.IMREAD_GRAYSCALE);
-            Mat srcColor = Imgcodecs.imread(folder + "/"+ fileName, Imgcodecs.IMREAD_COLOR);
-           
+            Mat src = Imgcodecs.imread(folder + "/"+ fileName, Imgcodecs.IMREAD_COLOR);
             
-            // Reduce noise by filtering
-            Mat srcBlurred = new Mat();            
-            Size ksize = new Size(5, 5);
-            double sigmaX = 0;
-            double sigmaY = 0;
-            Imgproc.GaussianBlur(src, srcBlurred, ksize, sigmaX, sigmaY , Core.BORDER_DEFAULT);
+            // Create a kernel that we will use to sharpen our image
+            Mat kernel = new Mat(3, 3, CvType.CV_32F);
+            // an approximation of second derivative, a quite strong kernel
+            float[] kernelData = new float[(int) (kernel.total() * kernel.channels())];
+            kernelData[0] = 1; kernelData[1] = 1; kernelData[2] = 1;
+            kernelData[3] = 1; kernelData[4] = -8; kernelData[5] = 1;
+            kernelData[6] = 1; kernelData[7] = 1; kernelData[8] = 1;
+            kernel.put(0, 0, kernelData);
+
+            // Do the laplacian filtering and convert to CV_32
+            // in order not to truncate negative numbers
+            Mat imgLaplacian = new Mat();
+            Imgproc.filter2D(src, imgLaplacian, CvType.CV_32F, kernel);
+            Mat sharp = new Mat();
+            src.convertTo(sharp, CvType.CV_32F);
+            Mat imgSharpened = new Mat();
+            Core.subtract(sharp, imgLaplacian, imgSharpened);
+
+            // convert back to 8bits gray scale
+            imgSharpened.convertTo(imgSharpened, CvType.CV_8UC3);
+            imgLaplacian.convertTo(imgLaplacian, CvType.CV_8UC3);
+
+            // Create binary image from source image
+            Mat bw = new Mat();
+            Imgproc.cvtColor(imgSharpened, bw, Imgproc.COLOR_BGR2GRAY);
+            Imgproc.threshold(bw, bw, 0, 255, Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
             
-            // Improve the contrast to account for lighting conditions
-            Mat srcEqualized = new Mat();
-            Imgproc.equalizeHist(src, srcEqualized);
+
+            // Perform the distance transform algorithm
+            Mat dist = new Mat();
+            Imgproc.distanceTransform(bw, dist, Imgproc.DIST_C, 3);
+
+            // Normalize the distance image for range = {0.0, 1.0}
+            // so we can visualize and threshold it
+            Mat dist2 = new Mat();
+            Core.normalize(dist, dist2, 0.0, 1.0, Core.NORM_MINMAX);
+            Mat distDisplayScaled = new Mat();
+            Core.multiply(dist2, new Scalar(255), distDisplayScaled);
+            Mat distDisplay = new Mat();
+            distDisplayScaled.convertTo(distDisplay, CvType.CV_8U);
             
-            
-            // Sharpen the image to emphasize the edges
-            Mat kernelSharpening = new Mat( new Size(3,3), CvType.CV_32F);
-            double[] data = {-1, -1, -1, -1, 9, -1, -1, -1, -1};
-            kernelSharpening.put(0, 0, data);
-            Mat srcSharpened = new Mat();
-            Imgproc.filter2D(src, srcSharpened, -1, kernelSharpening);
-            
-            
-            // threshold to find the contour
-            Mat thresholded = new Mat();
-            Imgproc.threshold(srcSharpened, thresholded, 0, 255, Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU);
+
+            // Threshold to obtain the peaks
+            // This will be the markers for the foreground objects
+            Mat dstThreshold = new Mat();
+            Imgproc.threshold(dist, dstThreshold, 0.4, 1.0, Imgproc.THRESH_BINARY);
+
+            // Dilate a bit the dist image
+            Mat kernel1 = Mat.ones(3, 3, CvType.CV_8U);
+            Imgproc.dilate(dstThreshold, dstThreshold, kernel1);
+            Mat distDisplay2 = new Mat();
+            dist.convertTo(distDisplay2, CvType.CV_8U);
+            Core.multiply(distDisplay2, new Scalar(255), distDisplay2);
+
+            // Create the CV_8U version of the distance image
+            // It is needed for findContours()
+            Mat dist_8u = new Mat();
+            dist.convertTo(dist_8u, CvType.CV_8U);
+
+            // Find total markers
+            List<MatOfPoint> contours = new ArrayList<>();
+            Mat hierarchy = new Mat();
+            Imgproc.findContours(dist_8u, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+
+            // Create the marker image for the watershed algorithm
+            Mat markers = Mat.zeros(dist.size(), CvType.CV_32S);
 
             
-            // Get rid of self intersecting contours
-            Mat cleaned = new Mat();
-            int kernelSize = 2;
-            int elementType = Imgproc.CV_SHAPE_RECT;
-            Mat element = Imgproc.getStructuringElement(
-                    elementType, new Size(2 * kernelSize + 1, 2 * kernelSize + 1),
-                    new Point(kernelSize, kernelSize));
-            Imgproc.dilate(thresholded, cleaned, element, new Point(element.width()/2, element.height()/2), 4);
-            //Imgproc.erode(cleaned, cleaned, element, new Point(element.width()/2, element.height()/2), 1);
-       
-                        
-            // Find edges
-            Mat cannyOutput = new Mat();
-            int cannyThreshold = 70;
-            Imgproc.Canny(cleaned, cannyOutput, cannyThreshold, cannyThreshold * 2);
-
-            // Increase contour thickness
-            Mat dilated  = new Mat();
-            Mat eroded = new Mat();
-            Imgproc.dilate(cannyOutput, dilated, element, new Point(element.width()/2, element.height()/2), 4);
-            Imgproc.erode(dilated, eroded, element, new Point(element.width()/2, element.height()/2), 1);
-
-  
-            Mat drawing = eroded;
-            
-            
-            /*
-
-            // Get the strong corners in the source image
-            MatOfPoint corners = new MatOfPoint();
-            int maxCorners = 50;
-            double qualityLevel = 0.1;
-            double minDistance = 10;
-            Imgproc.goodFeaturesToTrack(srcSharpened, corners, maxCorners, qualityLevel, minDistance);
-            
-            // Draw corners detected
-            
-            int radius = 8;
-            List<Point> points = corners.toList();
-            for (int j=0; j < corners.rows(); j++) {
-                Imgproc.circle(drawing, points.get(j), radius, new Scalar(0, 255, 0), Imgproc.LINE_8);
+            // Draw the foreground markers
+            for (int j = 0; j < contours.size(); j++) {
+                Imgproc.drawContours(markers, contours, j, new Scalar(j + 1), -1);
             }
             
-
-
             
-                            
+
+            // Draw the background marker
+            Mat markersScaled = new Mat();
+            markers.convertTo(markersScaled, CvType.CV_32F);
+            Core.normalize(markersScaled, markersScaled, 0.0, 255.0, Core.NORM_MINMAX);
+            Imgproc.circle(markersScaled, new Point(5, 5), 3, new Scalar(255, 255, 255), -1);
+            Mat markersDisplay = new Mat();
+            markersScaled.convertTo(markersDisplay, CvType.CV_8U);
             
-            //Mat drawing = cannyOutput;
-            //Mat drawing  = new Mat(src.size(), CvType.CV_8UC3);
-            Mat drawing = src;
+            Imgproc.circle(markers, new Point(5, 5), 3, new Scalar(255, 255, 255), -1);
 
-            // Find all contours
-            Mat hierarchy = new Mat();
-            List<MatOfPoint> contours = new ArrayList<>();
-            Imgproc.findContours(cannyOutput, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+            // Perform the watershed algorithm
+            Imgproc.watershed(imgSharpened, markers);
 
-            //System.out.println("Number of contours = " + String.valueOf(contours.size()));
+            Mat mark = Mat.zeros(markers.size(), CvType.CV_8U);
+            markers.convertTo(mark, CvType.CV_8UC1);
+            Core.bitwise_not(mark, mark);
+            
+            // Generate random colors
+            Random rng = new Random(12345);
+            List<Scalar> colors = new ArrayList<>(contours.size());
+            for (int i1 = 0; i1 < contours.size(); i1++) {
+                int b = rng.nextInt(256);
+                int g = rng.nextInt(256);
+                int r = rng.nextInt(256);
 
-            Scalar green = new Scalar(0, 255, 0);
-            Scalar blue = new Scalar(0, 0, 255);
+                colors.add(new Scalar(b, g, r));
+            }
 
-            // Structural shape analysis
-            double contourArea = 0.0;
-            double contourLength = 0.0;
-            double minContourLength = 0.0;
-            MatOfPoint contour = new MatOfPoint();
-            MatOfPoint2f contour2f = new MatOfPoint2f();
+            // Create the result image
+            Mat dst = Mat.zeros(markers.size(), CvType.CV_8UC3);
+            byte[] dstData = new byte[(int) (dst.total() * dst.channels())];
+            dst.get(0, 0, dstData);
 
-            RotatedRect rect = new RotatedRect();
-            Point[] vertices = new Point[4];
-            MatOfPoint verticesMat = new MatOfPoint();
-
-            for (int j = 0; j < contours.size(); j++) {
-
-                contour = contours.get(j);
-                contour.convertTo(contour2f, CvType.CV_32F);
-
-                //contourArea = Imgproc.contourArea(contours.get(i));
-                contourLength = Imgproc.arcLength(contour2f, false);
-                minContourLength = 0.9 * 1 * src.width() + 0.9 * 1 * src.height();
-
-                if (contourLength > minContourLength ) {
-
-                    rect = Imgproc.minAreaRect(contour2f);
-                    rect.points(vertices);
-                    verticesMat.fromArray(vertices);
-
-                    Imgproc.drawContours(drawing, contours, j, green, Imgproc.LINE_8, Imgproc.LINE_8, hierarchy, 0);
-                    
-                    drawRotatedRect(drawing, vertices, blue);
+            // Fill labeled objects with random colors
+            int[] markersData = new int[(int) (markers.total() * markers.channels())];
+            markers.get(0, 0, markersData);
+            
+            /*
+            for (int k = 0; k < markers.rows(); i++) {
+                for (int j = 0; j < markers.cols(); j++) {
+                    int index = markersData[k * markers.cols() + j];
+                    if (index > 0 && index <= contours.size()) {
+                        dstData[(k * dst.cols() + j) * 3 + 0] = (byte) colors.get(index - 1).val[0];
+                        dstData[(k * dst.cols() + j) * 3 + 1] = (byte) colors.get(index - 1).val[1];
+                        dstData[(k * dst.cols() + j) * 3 + 2] = (byte) colors.get(index - 1).val[2];
+                    } else {
+                        dstData[(k * dst.cols() + j) * 3 + 0] = 0;
+                        dstData[(k * dst.cols() + j) * 3 + 1] = 0;
+                        dstData[(k * dst.cols() + j) * 3 + 2] = 0;
+                    }
                 }
             }
             */
+            dst.put(0, 0, dstData);
             
             
-            Imgcodecs.imwrite("result/"+fileName, drawing);
+            Imgcodecs.imwrite("result/"+fileName, dist_8u);
         
         }
         
